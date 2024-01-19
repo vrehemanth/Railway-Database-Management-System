@@ -1,0 +1,133 @@
+Creation of tables:
+
+-- Stations Table
+mysql> CREATE TABLE Stations (
+    ->     StationID INT PRIMARY KEY,
+    ->     StationName VARCHAR(100),
+    ->     Location VARCHAR(100)
+    -> );
+
+-- Trains Table
+mysql> CREATE TABLE Trains (
+    ->     TrainID INT PRIMARY KEY,
+    ->     TrainName VARCHAR(100),
+    ->     MaxCapacity INT,
+    ->     Speed INT
+    -> );
+
+-- Routes Table
+mysql> CREATE TABLE Routes (
+    ->     RouteID INT PRIMARY KEY,
+    ->     SourceStationID INT,
+    ->     DestinationStationID INT,
+    ->     Distance INT,
+    ->     Duration INT,
+    ->     TicketPrice DECIMAL(10, 2),
+    ->     FOREIGN KEY (SourceStationID) REFERENCES Stations(StationID),
+    ->     FOREIGN KEY (DestinationStationID) REFERENCES Stations(StationID)
+    -> );
+
+-- Schedules Table
+mysql> CREATE TABLE Schedules (
+    ->     ScheduleID INT PRIMARY KEY,
+    ->     TrainID INT,
+    ->     RouteID INT,
+    ->     DepartureTime TIMESTAMP,
+    ->     ArrivalTime TIMESTAMP,
+    ->     FOREIGN KEY (TrainID) REFERENCES Trains(TrainID),
+    ->     FOREIGN KEY (RouteID) REFERENCES Routes(RouteID)
+    -> );
+
+-- Tickets Table 
+mysql> CREATE TABLE Tickets (
+    ->     TicketID INT AUTO_INCREMENT PRIMARY KEY,
+    ->     ScheduleID INT,
+    ->     RouteID INT,
+    ->     PassengerName VARCHAR(100),
+    ->     TicketPrice DECIMAL(10, 2),
+    ->     BookingDate DATE,
+    ->     FOREIGN KEY (ScheduleID) REFERENCES Schedules(ScheduleID),
+    ->     FOREIGN KEY (RouteID) REFERENCES Routes(RouteID)
+    -> );
+
+Queries:
+
+1)  Create Trigger to Update TicketPrice and booking date Before Inserting Ticket
+mysql> DELIMITER //
+mysql> CREATE TRIGGER before_insert_ticket
+    -> BEFORE INSERT ON Tickets
+    -> FOR EACH ROW
+    -> BEGIN
+    ->     DECLARE route_price DECIMAL(10, 2);
+    ->     -- Get the TicketPrice from the corresponding Route
+    ->     SELECT TicketPrice INTO route_price FROM Routes WHERE RouteID = NEW.RouteID;
+    ->     -- Set the TicketPrice for the new ticket
+    ->     SET NEW.TicketPrice = route_price;
+    ->   SET NEW.BookingDate = CURDATE();
+    ->
+    -> END;
+    -> //
+mysql> DELIMITER ;
+
+2)Book a ticket for a specific schedule.
+mysql> INSERT INTO Tickets (ScheduleID, RouteID, PassengerName)
+    -> VALUES (1001, 1,  'John Doe');
+
+3) Cancel a booked ticket based on TicketID.
+mysql> DELETE FROM Tickets WHERE TicketID = 1;
+
+4)To update schedules table for next day
+mysql> UPDATE Schedules
+    ->      SET DepartureTime = DATE_ADD(DepartureTime, INTERVAL 1 DAY),
+    ->      ArrivalTime = DATE_ADD(ArrivalTime, INTERVAL 1 DAY);
+
+5)Create Trigger to Check Maximum Capacity Before Booking
+mysql> DELIMITER //
+mysql> CREATE TRIGGER before_book_ticket
+    -> BEFORE INSERT ON Tickets
+    -> FOR EACH ROW
+    -> BEGIN
+    ->     DECLARE current_capacity INT;
+    ->     DECLARE max_capacity INT;
+    ->     -- Get the current capacity and maximum capacity of the train
+    ->     SELECT COUNT(*) INTO current_capacity FROM Tickets WHERE ScheduleID = NEW.ScheduleID;
+    ->     SELECT MaxCapacity INTO max_capacity FROM Trains WHERE TrainID = (SELECT TrainID FROM Schedules WHERE ScheduleID = NEW.ScheduleID);
+    ->     -- Check if booking exceeds the maximum capacity
+    ->     IF current_capacity >= max_capacity THEN
+    ->         SIGNAL SQLSTATE '45000'
+    ->         SET MESSAGE_TEXT = 'Booking failed. Train is already at full capacity.';
+    ->     END IF;
+    -> END;
+    -> //
+mysql> DELIMITER ;
+
+6) Retrieve the ticket price for a specific schedule.
+mysql> SELECT TicketPrice FROM Routes
+    -> WHERE RouteID = (SELECT RouteID FROM Schedules WHERE ScheduleID = 1001);
+
+7)Check number tickets are available for booking.
+mysql> SELECT (Trains.MaxCapacity - COUNT(*)) AS TicketsAvailable
+    -> FROM Tickets
+    -> JOIN Schedules ON Tickets.ScheduleID = Schedules.ScheduleID
+    -> JOIN Trains ON Schedules.TrainID = Trains.TrainID
+    -> WHERE Schedules.ScheduleID = 1001;
+
+8) Retrieve the booking history for a specific passenger.
+mysql> SELECT * FROM Tickets WHERE PassengerName = 'John Doe' ORDER BY BookingDate DESC;
+
+9) Retrieve the count of tickets booked for each train.
+mysql> SELECT Trains.TrainID, TrainName, COUNT(Tickets.TicketID) AS TicketsBooked
+    -> FROM Trains
+    -> LEFT JOIN Schedules ON Trains.TrainID = Schedules.TrainID
+    -> LEFT JOIN Tickets ON Schedules.ScheduleID = Tickets.ScheduleID
+    -> GROUP BY Trains.TrainID, TrainName;
+
+10) Identify the most popular routes based on the number of tickets
+mysql> SELECT Routes.RouteID, StationName AS SourceStation, Location AS SourceLocation,
+    ->        StationName AS DestinationStation, Location AS DestinationLocation,
+    ->        COUNT(Tickets.TicketID) AS TicketsBooked
+    -> FROM Routes
+    -> JOIN Stations ON Routes.SourceStationID = Stations.StationID
+    -> JOIN Tickets ON Routes.RouteID = Tickets.RouteID
+    -> GROUP BY Routes.RouteID
+    -> ORDER BY TicketsBooked DESC;
